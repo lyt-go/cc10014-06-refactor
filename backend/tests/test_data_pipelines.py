@@ -34,13 +34,7 @@ from app.services.table_compare import TableCompareService
 def _clear_all():
     for k in list(store._tables.keys()):
         store._tables[k] = []
-    store._table_data.clear()
-    store._lineage_edges.clear()
-    store._quality_results.clear()
-    store._snapshot_data.clear()
-    store._archive_records.clear()
-    store._backfill_partitions.clear()
-    store._versions.clear()
+    store.reset_runtime()
 
 # ---------------------------------------------------------------------------
 # 1. 入库→映射→贴源层链路

@@ -1,9 +1,19 @@
-"""清洗策略业务规则：支持配置清洗规则并应用到目标数据集，驱动DWD表生成。"""
+"""清洗策略业务规则：支持配置清洗规则并应用到目标数据集，驱动DWD表生成。
+
+重构说明：逐行清洗判定已统一收拢到 ``app.cleansing.engine``，本服务只负责
+策略条目的登记/状态/版本管理，以及对外暴露与历史签名完全一致的
+``apply_cleanse``（委托统一引擎，入参到出参结果不变）和清洗规则执行报告。
+"""
 from __future__ import annotations
 
-import re
 from typing import Any
 
+from app.cleansing.engine import (
+    cleanse_row,
+    compile_pattern,
+    resume_cleanse_run,
+    run_dataset_cleanse,
+)
 from app.store import store
 
 MODULE = "cleanse_rule"
@@ -109,29 +119,58 @@ class CleanseRuleService:
         return entry, f"清洗策略已升级至 {entry['策略版本']}"
 
     def apply_cleanse(self, entry_id: int, data_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        """对输入数据行应用清洗规则。"""
+        """对输入数据行应用清洗规则。
+
+        重构后委托统一引擎的逐行判定 ``cleanse_row``，处理分支与默认值口径
+        与历史版本完全一致，仅返回清洗后的数据行（不在此路径写报告，保持
+        原调用方的入参/出参契约不变）。
+        """
         entry = self.get_entry(entry_id)
         if not entry:
             return data_rows
-        target_field = entry.get("目标字段", "")
-        regex_str = entry.get("正则表达式", "")
-        replace_val = entry.get("替换值", "")
-        null_handle = entry.get("空值处理", "")
+        pattern = compile_pattern(entry.get("正则表达式", ""))
         result = []
-        pattern = re.compile(regex_str) if regex_str else None
         for row in data_rows:
-            new_row = dict(row)
-            val = new_row.get(target_field)
-            if val is None or val == "":
-                if "填充" in null_handle:
-                    if "填充为" in null_handle:
-                        new_row[target_field] = null_handle.replace("填充为", "")
-                    else:
-                        new_row[target_field] = replace_val or "0"
-            elif pattern and not pattern.search(str(val)):
-                new_row[target_field] = replace_val
+            new_row, _ = cleanse_row(row, entry, pattern)
             result.append(new_row)
         return result
+
+    # ---- 清洗规则执行报告 ----
+
+    def execute_dataset_cleanse(
+        self,
+        dataset: str,
+        data_rows: list[dict[str, Any]],
+        *,
+        business_date: str | None = None,
+        stop_after: int | None = None,
+    ) -> dict[str, Any]:
+        """按数据集执行清洗并生成清洗规则执行报告（统一写法收拢入口）。"""
+        return run_dataset_cleanse(
+            dataset,
+            data_rows,
+            business_date=business_date,
+            stop_after=stop_after,
+        )
+
+    def resume_dataset_cleanse(
+        self, run_id: str, data_rows: list[dict[str, Any]], *, stop_after: int | None = None
+    ) -> dict[str, Any]:
+        """清洗策略中断后续写，仅处理未完成部分并在原报告上累加命中数。"""
+        return resume_cleanse_run(run_id, data_rows, stop_after=stop_after)
+
+    def get_report(self, run_id: str) -> dict[str, Any] | None:
+        return store.get_cleanse_run(run_id)
+
+    def list_reports(
+        self,
+        *,
+        dataset: str | None = None,
+        rule_no: str | None = None,
+        business_month: str | None = None,
+    ) -> list[dict[str, Any]]:
+        return store.list_cleanse_runs(
+            dataset=dataset, rule_no=rule_no, business_month=business_month)
 
     def get_rules_for_dataset(self, dataset: str) -> list[dict[str, Any]]:
         return store.find_all_by_field(MODULE, "目标数据集", dataset)

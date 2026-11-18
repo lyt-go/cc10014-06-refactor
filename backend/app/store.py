@@ -29,6 +29,8 @@ class Store:
         self._archive_records: list[dict[str, Any]] = []
         # 补数区间记录
         self._backfill_partitions: dict[str, list[dict[str, Any]]] = {}
+        # 清洗规则执行报告：run_id -> 单次清洗执行的报告数据
+        self._cleanse_runs: dict[str, dict[str, Any]] = {}
 
     def module_names(self) -> list[str]:
         return sorted(self._tables)
@@ -137,6 +139,40 @@ class Store:
     def get_quality_results(self, rule_id: str) -> list[dict[str, Any]]:
         return list(self._quality_results.get(rule_id, []))
 
+    # ---- 清洗规则执行报告 ----
+
+    def save_cleanse_run(self, run: dict[str, Any]) -> dict[str, Any]:
+        """落盘一次清洗执行报告（含规则记录、断点位置与差异清单）。"""
+        run_id = run["run_id"]
+        self._cleanse_runs[run_id] = run
+        return run
+
+    def new_cleanse_run_id(self, run_date: str) -> str:
+        """按业务日期生成下一个清洗运行编号（同日序号递增）。"""
+        return f"CLR-{run_date.replace('-', '')}-{len(self._cleanse_runs) + 1:04d}"
+
+    def get_cleanse_run(self, run_id: str) -> dict[str, Any] | None:
+        run = self._cleanse_runs.get(run_id)
+        return dict(run) if run else None
+
+    def list_cleanse_runs(
+        self, *, dataset: str | None = None, rule_no: str | None = None,
+        business_month: str | None = None,
+    ) -> list[dict[str, Any]]:
+        runs = []
+        for run in self._cleanse_runs.values():
+            if dataset is not None and run.get("dataset") != dataset:
+                continue
+            if business_month is not None and run.get("business_month") != business_month:
+                continue
+            if rule_no is not None and not any(
+                    rec.get("rule_no") == rule_no for rec in run.get("records", [])):
+                continue
+            runs.append(dict(run))
+        # 最新执行排在前面，同次内规则顺序由 records 自身保持
+        runs.sort(key=lambda item: item.get("started_at", ""), reverse=True)
+        return runs
+
     # ---- 快照 ----
 
     def save_snapshot_data(self, snapshot_id: str, table_name: str, rows: list[dict[str, Any]]) -> None:
@@ -165,6 +201,20 @@ class Store:
 
     def get_backfill_partitions(self, job_id: str) -> list[dict[str, Any]]:
         return list(self._backfill_partitions.get(job_id, []))
+
+    def reset_runtime(self) -> None:
+        """清空运行期数据（模拟表、版本、报告等），保留模块表结构。
+
+        供测试与重新初始化使用；新增运行期容器时在此统一登记，避免跨用例泄漏。
+        """
+        self._table_data.clear()
+        self._versions.clear()
+        self._lineage_edges.clear()
+        self._quality_results.clear()
+        self._snapshot_data.clear()
+        self._archive_records.clear()
+        self._backfill_partitions.clear()
+        self._cleanse_runs.clear()
 
 
 store = Store()

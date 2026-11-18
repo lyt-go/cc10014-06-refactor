@@ -88,14 +88,15 @@ class DwdLayerService:
             # 如果ODS没有数据，用seed数据生成模拟数据
             ods_data = self._mock_ods_data(ods_table)
             store.set_table_rows(ods_table, ods_data)
-        # 应用清洗
+        # 应用清洗（统一走清洗执行引擎，复用同一份判定与报告逻辑）
         cleanse_id = entry.get("清洗策略", "")
         if cleanse_id:
-            from app.services.cleanse_rule import CleanseRuleService
-            cs = CleanseRuleService()
+            from app.cleansing.engine import run_dataset_cleanse
             c_entry = store.find("cleanse_rule", self._resolve_id("cleanse_rule", cleanse_id))
             if c_entry:
-                ods_data = cs.apply_cleanse(c_entry["id"], ods_data)
+                run = run_dataset_cleanse(ods_table, ods_data, rules=[c_entry])
+                ods_data = run["rows"]
+                entry["最近清洗报告"] = run["run_id"]
         # 应用去重
         dedup_id = entry.get("去重配置", "")
         if dedup_id:

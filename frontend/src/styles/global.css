@@ -70,3 +70,10 @@ body { margin: 0; background: #f6f8fb; color: #1f2937; }
 .analysis-chart { display: flex; align-items: flex-end; gap: 8px; height: 160px; padding: 12px 0; }
 .analysis-bar { flex: 1; border-radius: 4px 4px 0 0; background: var(--brand); min-width: 24px; position: relative; transition: height 0.4s; }
 .analysis-bar span { position: absolute; bottom: -20px; left: 50%; transform: translateX(-50%); font-size: 10px; color: var(--muted); white-space: nowrap; }
+/* 清洗规则执行报告面板 */
+.report-entry { margin: 12px 0; }
+.report-modal { width: min(960px, 100%); }
+.report-detail { margin-top: 16px; border-top: 1px solid var(--border); padding-top: 12px; }
+.report-record { margin-bottom: 16px; padding: 10px; background: #f8fafc; border: 1px solid var(--border); border-radius: 8px; }
+.report-conflicts { margin-top: 12px; padding: 10px; background: #fff7ed; border: 1px solid #fdba74; border-radius: 8px; }
+.report-quality { margin-top: 12px; padding: 10px; background: #f0fdf4; border: 1px solid #86efac; border-radius: 8px; }

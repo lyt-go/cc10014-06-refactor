@@ -101,7 +101,34 @@ class QualityCheckService:
             "failed_rows": failed_rows[:5],  # 只保留前5条
         }
         store.save_quality_result(entry.get("规则编号", ""), result)
+        # 质量稽核跨模块回写清洗规则执行报告：稽核口径与通过率保持不变，
+        # 仅把本次稽核结论附加到该表最近一次清洗运行报告上，便于复核。
+        self._writeback_cleanse_report(entry, result)
         return {"ok": True, "message": f"稽核完成：通过{total - failed}/失败{failed}", "result": result}
+
+    def _writeback_cleanse_report(self, entry: dict[str, Any], result: dict[str, Any]) -> None:
+        """把质量稽核结果回写到目标表最近一次清洗规则执行报告。"""
+        table = entry.get("校验表名", "")
+        runs = store.list_cleanse_runs(dataset=table)
+        if not runs:
+            return
+        latest = runs[0]
+        run = store.get_cleanse_run(latest["run_id"])
+        if run is None:
+            return
+        pass_rate = (result["passed"] / result["total"]) if result["total"] else 1.0
+        writeback = {
+            "quality_rule_no": entry.get("规则编号", ""),
+            "table": table,
+            "field": entry.get("校验字段", ""),
+            "total": result["total"],
+            "passed": result["passed"],
+            "failed": result["failed"],
+            "pass_rate": round(pass_rate, 6),
+            "checked_at": result["checked_at"],
+        }
+        run.setdefault("quality_writebacks", []).append(writeback)
+        store.save_cleanse_run(run)
 
     def _check_value(self, val: Any, expr: str, lower: str, upper: str) -> bool:
         if expr:

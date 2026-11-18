@@ -3,12 +3,14 @@ from __future__ import annotations
 
 import csv
 import io
+from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 
 from app.schemas import ActionPayload, ActionResult, EntryPayload, PageResult
 from app.services.cleanse_rule import CleanseRuleService
+from app.store import store
 
 router = APIRouter(prefix="/api/cleanse_rule", tags=["清洗策略"])
 
@@ -63,6 +65,68 @@ def export_entries(
     return StreamingResponse(
         iter([output.getvalue()]), media_type="text/csv; charset=utf-8",
         headers={"Content-Disposition": 'attachment; filename="cleanse_rule.csv"'})
+
+
+@router.get("/reports", response_model=dict)
+def list_reports(
+    dataset: str | None = Query(default=None, description="按目标数据集过滤"),
+    rule_no: str | None = Query(default=None, description="按策略编号过滤"),
+    business_month: str | None = Query(default=None, description="按业务月份 yyyy-mm 过滤"),
+) -> dict[str, Any]:
+    """查询清洗规则执行报告列表，支持数据集、策略编号与跨月业务月份过滤。"""
+    items = service.list_reports(
+        dataset=dataset, rule_no=rule_no, business_month=business_month)
+    return {"items": items, "total": len(items)}
+
+
+@router.get("/reports/{run_id}", response_model=dict)
+def get_report(run_id: str) -> dict[str, Any]:
+    """读取单次清洗规则执行报告明细（含逐条命中、断点与差异清单）。"""
+    report = service.get_report(run_id)
+    if report is None:
+        raise HTTPException(status_code=404, detail=f"清洗执行报告 {run_id} 不存在")
+    return report
+
+
+@router.post("/datasets/{dataset}/execute", response_model=dict)
+def execute_dataset(
+    dataset: str,
+    payload: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """对数据集执行清洗并生成清洗规则执行报告。
+
+    请求体可携带 ``rows``（待清洗原始数据行，缺省时读取该表已落地数据）、
+    ``business_date``（业务日期，默认当天）、``stop_after``（模拟中断行数）。
+    """
+    payload = payload or {}
+    rows = payload.get("rows")
+    if rows is None:
+        rows = store.table_rows(dataset)
+    report = service.execute_dataset_cleanse(
+        dataset,
+        rows,
+        business_date=payload.get("business_date"),
+        stop_after=payload.get("stop_after"),
+    )
+    return report
+
+
+@router.post("/reports/{run_id}/resume", response_model=dict)
+def resume_report(run_id: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+    """中断后续写清洗：只处理未完成部分，沿用原报告累加命中数。"""
+    payload = payload or {}
+    report = service.get_report(run_id)
+    if report is None:
+        raise HTTPException(status_code=404, detail=f"清洗执行报告 {run_id} 不存在")
+    rows = payload.get("rows")
+    if rows is None:
+        rows = store.table_rows(report.get("dataset", ""))
+    try:
+        resumed = service.resume_dataset_cleanse(
+            run_id, rows, stop_after=payload.get("stop_after"))
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return resumed
 
 
 @router.get("/{entry_id}", response_model=dict)
